@@ -65,6 +65,19 @@ var cordova = require('cordova'),
     pollEnabled = false,
     messagesFromNative = [];
 
+function encodeParamAsync(arr, i, cb) {
+    if (utils.typeName(arr[i]) == 'ArrayBuffer') {
+        if (cordova.ASYNC_AB_ENCODE) {
+            base64.fromArrayBufferAsync(arr[i], function(a) {arr[i]=a;cb();});
+        } else {
+            arr[i] = base64.fromArrayBuffer(arr[i]);
+            cb();
+        }
+    } else {
+        cb();
+    }
+}
+
 function androidExec(success, fail, service, action, args) {
     // Set default bridge modes if they have not already been set.
     // By default, we use the failsafe, since addJavascriptInterface breaks too often
@@ -72,33 +85,38 @@ function androidExec(success, fail, service, action, args) {
         androidExec.setJsToNativeBridgeMode(jsToNativeModes.JS_OBJECT);
     }
 
+    var cnt = 0;
     // Process any ArrayBuffers in the args into a string.
     for (var i = 0; i < args.length; i++) {
-        if (utils.typeName(args[i]) == 'ArrayBuffer') {
-            args[i] = base64.fromArrayBuffer(args[i]);
+        encodeParamAsync(args, i, function() {
+            if (++cnt == args.length) afterArgs();
+        });
+    }
+    if (args.length === 0) {
+        afterArgs();
+    }
+    function afterArgs() {
+        var callbackId = service + cordova.callbackId++,
+            argsJson = JSON.stringify(args);
+
+        if (success || fail) {
+            cordova.callbacks[callbackId] = {success:success, fail:fail};
         }
-    }
 
-    var callbackId = service + cordova.callbackId++,
-        argsJson = JSON.stringify(args);
-
-    if (success || fail) {
-        cordova.callbacks[callbackId] = {success:success, fail:fail};
-    }
-
-    if (jsToNativeBridgeMode == jsToNativeModes.LOCATION_CHANGE) {
-        window.location = 'http://cdv_exec/' + service + '#' + action + '#' + callbackId + '#' + argsJson;
-    } else {
-        var messages = nativeApiProvider.get().exec(service, action, callbackId, argsJson);
-        // If argsJson was received by Java as null, try again with the PROMPT bridge mode.
-        // This happens in rare circumstances, such as when certain Unicode characters are passed over the bridge on a Galaxy S2.  See CB-2666.
-        if (jsToNativeBridgeMode == jsToNativeModes.JS_OBJECT && messages === "@Null arguments.") {
-            androidExec.setJsToNativeBridgeMode(jsToNativeModes.PROMPT);
-            androidExec(success, fail, service, action, args);
-            androidExec.setJsToNativeBridgeMode(jsToNativeModes.JS_OBJECT);
-            return;
+        if (jsToNativeBridgeMode == jsToNativeModes.LOCATION_CHANGE) {
+            window.location = 'http://cdv_exec/' + service + '#' + action + '#' + callbackId + '#' + argsJson;
         } else {
-            androidExec.processMessages(messages, true);
+            var messages = nativeApiProvider.get().exec(service, action, callbackId, argsJson);
+            // If argsJson was received by Java as null, try again with the PROMPT bridge mode.
+            // This happens in rare circumstances, such as when certain Unicode characters are passed over the bridge on a Galaxy S2.  See CB-2666.
+            if (jsToNativeBridgeMode == jsToNativeModes.JS_OBJECT && messages === "@Null arguments.") {
+                androidExec.setJsToNativeBridgeMode(jsToNativeModes.PROMPT);
+                androidExec(success, fail, service, action, args);
+                androidExec.setJsToNativeBridgeMode(jsToNativeModes.JS_OBJECT);
+                return;
+            } else {
+                androidExec.processMessages(messages, true);
+            }
         }
     }
 }
@@ -193,18 +211,17 @@ function processMessage(message) {
                 payload = +message.slice(nextSpaceIdx + 2);
             } else if (payloadKind == 'A') {
                 var data = message.slice(nextSpaceIdx + 2);
-                var bytes = window.atob(data);
-                var arraybuffer = new Uint8Array(bytes.length);
-                for (var i = 0; i < bytes.length; i++) {
-                    arraybuffer[i] = bytes.charCodeAt(i);
+                if (cordova.ASYNC_AB_DECODE) {
+                    base64.toArrayBufferAsync(data, afterDecode);
+                    return;
                 }
-                payload = arraybuffer.buffer;
+                payload = base64.toArrayBuffer(data);
             } else if (payloadKind == 'S') {
                 payload = window.atob(message.slice(nextSpaceIdx + 2));
             } else {
                 payload = JSON.parse(message.slice(nextSpaceIdx + 1));
             }
-            cordova.callbackFromNative(callbackId, success, status, [payload], keepCallback);
+            afterDecode(payload);
         } else {
             console.log("processMessage failed: invalid message: " + JSON.stringify(message));
         }
@@ -212,6 +229,9 @@ function processMessage(message) {
         console.log("processMessage failed: Error: " + e);
         console.log("processMessage failed: Stack: " + e.stack);
         console.log("processMessage failed: Message: " + message);
+    }
+    function afterDecode(arg) {
+        cordova.callbackFromNative(callbackId, success, status, [arg], keepCallback);
     }
 }
 
@@ -227,7 +247,7 @@ androidExec.processMessages = function(messages, opt_useTimeout) {
         return;
     }
     if (opt_useTimeout) {
-        window.setTimeout(androidExec.processMessages, 0);
+        setImmediate(androidExec.processMessages);
         return;
     }
     isProcessing = true;
@@ -238,7 +258,7 @@ androidExec.processMessages = function(messages, opt_useTimeout) {
             // The Java side can send a * message to indicate that it
             // still has messages waiting to be retrieved.
             if (msg == '*' && messagesFromNative.length === 0) {
-                setTimeout(pollOnce, 0);
+                setImmediate(pollOnce);
                 return;
             }
             processMessage(msg);

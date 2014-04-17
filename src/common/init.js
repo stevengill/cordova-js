@@ -19,6 +19,8 @@
  *
 */
 
+require('cordova/third_party/setImmediate');
+
 var channel = require('cordova/channel');
 var cordova = require('cordova');
 var modulemapper = require('cordova/modulemapper');

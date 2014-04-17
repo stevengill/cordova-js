@@ -21,19 +21,63 @@
 
 var base64 = exports;
 
+function blobFromArrayBuffer(arrayBuffer) {
+    try {
+        return new Blob([arrayBuffer]);
+    } catch (e) {
+        if (window.WebKitBlobBuilder) {
+            var bb = new window.WebKitBlobBuilder();
+            bb.append(arrayBuffer);
+            return bb.getBlob();
+        }
+    }
+    return null;
+}
+
 base64.fromArrayBuffer = function(arrayBuffer) {
     var array = new Uint8Array(arrayBuffer);
     return uint8ToBase64(array);
 };
 
+base64.fromArrayBufferAsync = function(arrayBuffer, cb) {
+    var blob = blobFromArrayBuffer(arrayBuffer);
+    if (!blob) {
+        setImmediate(function() {
+            cb(base64.fromArrayBuffer(arrayBuffer));
+        });
+    } else {
+        var fr = new FileReader();
+        fr.onloadend = function(e) {
+            cb(fr.result.slice(fr.result.indexOf(',') + 1));
+        };
+        fr.readAsDataURL(blob);
+    }
+};
+
 base64.toArrayBuffer = function(str) {
     var decodedStr = typeof atob != 'undefined' ? atob(str) : new Buffer(str,'base64').toString('binary');
-    var arrayBuffer = new ArrayBuffer(decodedStr.length);
-    var array = new Uint8Array(arrayBuffer);
-    for (var i=0, len=decodedStr.length; i < len; i++) {
+    var len = decodedStr.length;
+    var array = new Uint8Array(len);
+    for (var i=0; i < len; ++i) {
         array[i] = decodedStr.charCodeAt(i);
     }
-    return arrayBuffer;
+    return array.buffer;
+};
+
+base64.toArrayBufferAsync = function(str, cb) {
+    var xhr = new XMLHttpRequest();
+    xhr.responseType = 'arraybuffer';
+    if (xhr.responseType != 'arraybuffer') {
+        setImmediate(function() {
+            cb(base64.toArrayBuffer(str));
+        });
+    } else {
+        xhr.open('GET', 'data:;base64,' + str, true);
+        xhr.onload = function() {
+            cb(xhr.response);
+        };
+        xhr.send();
+    }
 };
 
 //------------------------------------------------------------------------------
