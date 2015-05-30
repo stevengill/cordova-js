@@ -32,7 +32,8 @@ module.exports = function(grunt) {
             "firefoxos": {},
             "webos": {},
             "ubuntu": {},
-            "browser": {}
+            "browser": {},
+            "electron": {}
         },
         "compile-browserify": {
             "amazon-fireos": {},
@@ -45,7 +46,8 @@ module.exports = function(grunt) {
             "wp8": { useWindowsLineEndings: true },
             "firefoxos": {},
             "ubuntu": {},
-            "browser": {}
+            "browser": {},
+            "electron": {}
         },
         clean: ['pkg'],
         jshint: {
